@@ -17,24 +17,21 @@ let hudVisible = true;
 let currentToggleHudHotkey = 'F6';
 
 let guideHotkeys = {
-  previous: 'F7',
-  complete: 'F8',
-  exit: 'F9',
-  zoomImage: 'E',
   menuUp: 'Up',
-  menuDown: 'Down'
+  menuDown: 'Down',
+  enter: 'Return',
+  escape: 'Esc',
+  exit: 'F9',
+  zoomImage: 'E'
 };
 
 function getGameLikeBounds() {
   const display = screen.getPrimaryDisplay();
-
-  // Para juego en ventana sin bordes, esto normalmente coincide con el área útil.
   return display.bounds;
 }
 
 const createWindow = () => {
   const bounds = getGameLikeBounds();
-
   const overlayWidth = 430;
 
   mainWindow = new BrowserWindow({
@@ -77,49 +74,40 @@ const createWindow = () => {
   // mainWindow.webContents.openDevTools();
 };
 
+function registerShortcutSafe(key, action) {
+  if (!key) return;
+
+  globalShortcut.unregister(key);
+
+  const success = globalShortcut.register(key, () => {
+    if (hudVisible) {
+      mainWindow.webContents.send('guide-action', action);
+    }
+  });
+
+  if (!success) {
+    console.warn(`No se pudo registrar shortcut: ${key}`);
+  }
+}
+
 function registerGuideHotkeys() {
   unregisterGuideHotkeys();
 
-  globalShortcut.register(guideHotkeys.menuUp, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'menuUp');
-    }
-  });
+  registerShortcutSafe(guideHotkeys.menuUp, 'menuUp');
+  registerShortcutSafe(guideHotkeys.menuDown, 'menuDown');
 
-  globalShortcut.register(guideHotkeys.menuDown, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'menuDown');
-    }
-  });
+  registerShortcutSafe(guideHotkeys.enter, 'enter');
+  registerShortcutSafe(guideHotkeys.escape, 'escape');
 
-  globalShortcut.register(guideHotkeys.previous, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'previous');
-    }
-  });
-
-  globalShortcut.register(guideHotkeys.complete, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'complete');
-    }
-  });
-
-  globalShortcut.register(guideHotkeys.exit, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'exit');
-    }
-  });
-
-  globalShortcut.register(guideHotkeys.zoomImage, () => {
-    if (hudVisible) {
-      mainWindow.webContents.send('guide-action', 'zoomImage');
-    }
-  });
+  registerShortcutSafe(guideHotkeys.exit, 'exit');
+  registerShortcutSafe(guideHotkeys.zoomImage, 'zoomImage');
 }
 
 function unregisterGuideHotkeys() {
   Object.values(guideHotkeys).forEach((key) => {
-    globalShortcut.unregister(key);
+    if (key) {
+      globalShortcut.unregister(key);
+    }
   });
 }
 
@@ -129,10 +117,18 @@ function toggleHud() {
   if (hudVisible) {
     mainWindow.show();
     mainWindow.focus();
+
+    mainWindow.webContents.send('hud-visibility', 'show');
+
     registerGuideHotkeys();
   } else {
+    mainWindow.webContents.send('hud-visibility', 'hide');
+
     unregisterGuideHotkeys();
-    mainWindow.hide();
+
+    setTimeout(() => {
+      mainWindow.hide();
+    }, 180);
   }
 }
 
@@ -165,14 +161,30 @@ ipcMain.on('update-hotkey', (_, action, key) => {
     return;
   }
 
-  if (
-    action === 'previous' ||
-    action === 'complete' ||
-    action === 'exit' ||
-    action === 'zoomImage'
-  ) {
+  if (action === 'previous') {
     unregisterGuideHotkeys();
+    guideHotkeys.menuUp = key;
 
+    if (hudVisible) {
+      registerGuideHotkeys();
+    }
+
+    return;
+  }
+
+  if (action === 'complete') {
+    unregisterGuideHotkeys();
+    guideHotkeys.menuDown = key;
+
+    if (hudVisible) {
+      registerGuideHotkeys();
+    }
+
+    return;
+  }
+
+  if (action === 'exit' || action === 'zoomImage') {
+    unregisterGuideHotkeys();
     guideHotkeys[action] = key;
 
     if (hudVisible) {

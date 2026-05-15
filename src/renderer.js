@@ -69,7 +69,8 @@ function getItems() {
       {
         id: 'settings',
         name: 'Configuración',
-        type: 'settings'
+        type: 'settings',
+        fixedBottom: true
       }
     ];
   }
@@ -329,18 +330,23 @@ function render() {
     case 'games':
       title.textContent = 'Juegos';
       break;
+
     case 'settings':
       title.textContent = 'Configuración';
       break;
+
     case 'maps':
       title.textContent = selectedGame.name;
       break;
+
     case 'guides':
       title.textContent = selectedMap.name;
       break;
+
     case 'steps':
       title.textContent = selectedGuide.name;
       break;
+
     case 'relics':
       title.textContent = 'Reliquias';
       break;
@@ -407,9 +413,10 @@ function render() {
   const currentRecipeIndex = getCurrentStepIndex();
 
   let visibleItems = items;
+  let startIndex = 0;
 
   if (recipeMode) {
-    const startIndex = Math.max(
+    startIndex = Math.max(
       0,
       currentRecipeIndex - 2
     );
@@ -421,8 +428,12 @@ function render() {
   }
 
   visibleItems.forEach((item, visibleIndex) => {
+    if (item.fixedBottom) {
+      return;
+    }
+
     const index = recipeMode
-      ? Math.max(0, currentRecipeIndex - 2) + visibleIndex
+      ? startIndex + visibleIndex
       : visibleIndex;
 
     const previousItem = items[index - 1];
@@ -434,10 +445,11 @@ function render() {
     ) {
       const sectionTitle = document.createElement('div');
 
-      sectionTitle.className = `
-      section-title
-      section-${item.section.toLowerCase()}
-      `;
+      const sectionClass = item.section
+        .toLowerCase()
+        .replace(/\s+/g, '-');
+
+      sectionTitle.className = `section-title section-${sectionClass}`;
       sectionTitle.textContent = item.section;
 
       content.appendChild(sectionTitle);
@@ -536,6 +548,34 @@ function render() {
 
     content.appendChild(div);
   });
+
+  if (currentScreen === 'games') {
+    const settingsItem = items.find(
+      (item) => item.type === 'settings'
+    );
+
+    const settingsIndex = items.findIndex(
+      (item) => item.type === 'settings'
+    );
+
+    const settingsButton = document.createElement('div');
+
+    settingsButton.className = 'settings-button';
+
+    if (selectedIndex === settingsIndex) {
+      settingsButton.classList.add('selected');
+    }
+
+    settingsButton.innerHTML = '<span>⚙ CONFIGURACIÓN</span>';
+
+    settingsButton.onclick = () => {
+      currentScreen = 'settings';
+      selectedIndex = 0;
+      render();
+    };
+
+    content.appendChild(settingsButton);
+  }
 
   const currentElement = content.querySelector('.menu-item.selected');
 
@@ -796,6 +836,14 @@ window.addEventListener('keyup', () => {
 });
 
 window.electronAPI.onGuideAction((action) => {
+  if (action === 'enter') {
+    enter();
+  }
+
+  if (action === 'escape') {
+    exitRecipeMenu();
+  }
+
   if (action === 'menuUp') {
     if (
       currentScreen === 'steps' ||
@@ -837,6 +885,20 @@ window.electronAPI.onGuideAction((action) => {
 
 Object.entries(hotkeys).forEach(([action, key]) => {
   window.electronAPI.updateHotkey(action, key);
+});
+
+window.electronAPI.onHudVisibility((value) => {
+  const hud = document.getElementById('hud');
+
+  if (value === 'show') {
+    hud.classList.remove('hud-hidden');
+    hud.classList.add('hud-visible');
+  }
+
+  if (value === 'hide') {
+    hud.classList.remove('hud-visible');
+    hud.classList.add('hud-hidden');
+  }
 });
 
 render();

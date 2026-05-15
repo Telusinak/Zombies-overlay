@@ -1,7 +1,7 @@
 export const defaultHotkeys = {
   previous: 'Up',
   complete: 'Down',
-  exit: 'F9',
-  toggleHud: 'F6',
-  zoomImage: 'E'
+  exit: 'F2',
+  toggleHud: 'F3',
+  zoomImage: 'F1'
 };
