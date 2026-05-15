@@ -406,7 +406,43 @@ function render() {
 
   const currentRecipeIndex = getCurrentStepIndex();
 
-  items.forEach((item, index) => {
+  let visibleItems = items;
+
+  if (recipeMode) {
+    const startIndex = Math.max(
+      0,
+      currentRecipeIndex - 2
+    );
+
+    visibleItems = items.slice(
+      startIndex,
+      startIndex + 6
+    );
+  }
+
+  visibleItems.forEach((item, visibleIndex) => {
+    const index = recipeMode
+      ? Math.max(0, currentRecipeIndex - 2) + visibleIndex
+      : visibleIndex;
+
+    const previousItem = items[index - 1];
+
+    if (
+      recipeMode &&
+      item.section &&
+      item.section !== previousItem?.section
+    ) {
+      const sectionTitle = document.createElement('div');
+
+      sectionTitle.className = `
+      section-title
+      section-${item.section.toLowerCase()}
+      `;
+      sectionTitle.textContent = item.section;
+
+      content.appendChild(sectionTitle);
+    }
+
     const div = document.createElement('div');
     div.className = 'menu-item';
 

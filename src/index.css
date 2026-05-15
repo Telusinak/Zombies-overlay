@@ -102,6 +102,40 @@ h2 {
   opacity: 1;
 }
 
+.section-title {
+  margin: 14px 0 8px;
+  padding: 6px 10px;
+  background: rgba(255, 50, 50, 0.18);
+  border-left: 4px solid #ff3333;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #ff9999;
+  letter-spacing: 1px;
+}
+
+.section-title {
+  margin: 14px 0 8px;
+  padding: 6px 10px;
+  border-left: 4px solid;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.section-nukedtown {
+  background: rgba(255, 40, 40, 0.18);
+  border-color: #ff3333;
+  color: #ff9999;
+}
+
+.section-cleantown {
+  background: rgba(40, 255, 120, 0.16);
+  border-color: #35ff7a;
+  color: #a6ffc4;
+}
+
 .footer {
   position: absolute;
   left: 20px;
