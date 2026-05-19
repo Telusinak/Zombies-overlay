@@ -2,15 +2,33 @@ import './index.css';
 import { games } from './data/games.js';
 import { defaultHotkeys } from './config/hotkeys.js';
 
+// ===============================
+// DOM
+// ===============================
+
 const content = document.getElementById('content');
 const footer = document.getElementById('footer');
 
+// ===============================
+// STATE
+// ===============================
+
 let currentScreen = 'games';
+
+let selectedIndex = 0;
+let selectedGame = null;
+let selectedMap = null;
 let selectedGuide = null;
 
 let rebinding = false;
 let rebindingAction = null;
 let rebindError = null;
+
+let imageViewerOpen = false;
+let imageViewerImages = [];
+let imageViewerIndex = 0;
+
+const completed = {};
 
 const forbiddenKeys = [
   'Escape',
@@ -20,15 +38,9 @@ const forbiddenKeys = [
   ' '
 ];
 
-let selectedIndex = 0;
-let selectedGame = null;
-let selectedMap = null;
-
-let imageViewerOpen = false;
-let imageViewerSrc = null;
-let compactMode = false;
-
-const completed = {};
+// ===============================
+// HOTKEYS
+// ===============================
 
 const savedHotkeys = localStorage.getItem('zombies-hotkeys');
 
@@ -57,10 +69,15 @@ function saveHotkeys() {
   );
 }
 
-function toggleCompactMode() {
-  compactMode = !compactMode;
-  render();
+function syncHotkeysWithMain() {
+  Object.entries(hotkeys).forEach(([action, key]) => {
+    window.electronAPI.updateHotkey(action, key);
+  });
 }
+
+// ===============================
+// DATA / ITEMS
+// ===============================
 
 function getItems() {
   if (currentScreen === 'games') {
@@ -137,6 +154,23 @@ function getItems() {
   return [];
 }
 
+function isRecipeScreen() {
+  return currentScreen === 'steps' || currentScreen === 'relics';
+}
+
+function isMenuScreen() {
+  return (
+    currentScreen === 'games' ||
+    currentScreen === 'maps' ||
+    currentScreen === 'guides' ||
+    currentScreen === 'settings'
+  );
+}
+
+// ===============================
+// PROGRESS
+// ===============================
+
 function getProgressKey() {
   if (currentScreen === 'steps') {
     return `guide-${selectedMap.id}-${selectedGuide.id}`;
@@ -158,12 +192,9 @@ function getCurrentStepIndex() {
 }
 
 function getProgress() {
+  if (!isRecipeScreen()) return null;
+
   const items = getItems();
-
-  if (currentScreen !== 'steps' && currentScreen !== 'relics') {
-    return null;
-  }
-
   const current = getCurrentStepIndex();
 
   const percent =
@@ -178,13 +209,56 @@ function getProgress() {
   };
 }
 
-function getCurrentRecipeItem() {
-  if (
-    currentScreen !== 'steps' &&
-    currentScreen !== 'relics'
-  ) {
-    return null;
+function advanceRecipe() {
+  const key = getProgressKey();
+
+  if (!key) return;
+
+  if (!completed[key]) {
+    completed[key] = [];
   }
+
+  const items = getItems();
+
+  if (completed[key].length >= items.length) {
+    return;
+  }
+
+  const nextItem = items[completed[key].length];
+
+  completed[key].push(
+    nextItem.id ||
+      nextItem.name ||
+      nextItem.title
+  );
+
+  render();
+}
+
+function backRecipeStep() {
+  const key = getProgressKey();
+
+  if (key && completed[key]?.length > 0) {
+    completed[key].pop();
+  }
+
+  render();
+}
+
+function resetCurrentRecipe() {
+  const key = getProgressKey();
+
+  if (key) {
+    completed[key] = [];
+  }
+}
+
+// ===============================
+// IMAGE VIEWER
+// ===============================
+
+function getCurrentRecipeItem() {
+  if (!isRecipeScreen()) return null;
 
   const items = getItems();
   const index = getCurrentStepIndex();
@@ -192,20 +266,35 @@ function getCurrentRecipeItem() {
   return items[index] || null;
 }
 
+function getItemImages(item) {
+  if (item?.images?.length) {
+    return item.images;
+  }
+
+  if (item?.image) {
+    return [item.image];
+  }
+
+  return [];
+}
+
 function openCurrentImage() {
   const item = getCurrentRecipeItem();
+  const images = getItemImages(item);
 
-  if (!item?.image) return;
+  if (!images.length) return;
 
   imageViewerOpen = true;
-  imageViewerSrc = item.image;
+  imageViewerImages = images;
+  imageViewerIndex = 0;
 
   render();
 }
 
 function closeImageViewer() {
   imageViewerOpen = false;
-  imageViewerSrc = null;
+  imageViewerImages = [];
+  imageViewerIndex = 0;
 
   render();
 }
@@ -219,29 +308,42 @@ function toggleCurrentImage() {
   openCurrentImage();
 }
 
+function nextViewerImage() {
+  if (!imageViewerOpen) return;
+
+  imageViewerIndex = Math.min(
+    imageViewerIndex + 1,
+    imageViewerImages.length - 1
+  );
+
+  render();
+}
+
+function previousViewerImage() {
+  if (!imageViewerOpen) return;
+
+  imageViewerIndex = Math.max(
+    imageViewerIndex - 1,
+    0
+  );
+
+  render();
+}
+
+// ===============================
+// NAVIGATION
+// ===============================
+
 function menuUp() {
-  if (
-    currentScreen !== 'games' &&
-    currentScreen !== 'maps' &&
-    currentScreen !== 'guides' &&
-    currentScreen !== 'settings'
-  ) {
-    return;
-  }
+  if (!isMenuScreen()) return;
 
   selectedIndex = Math.max(selectedIndex - 1, 0);
+
   render();
 }
 
 function menuDown() {
-  if (
-    currentScreen !== 'games' &&
-    currentScreen !== 'maps' &&
-    currentScreen !== 'guides' &&
-    currentScreen !== 'settings'
-  ) {
-    return;
-  }
+  if (!isMenuScreen()) return;
 
   const items = getItems();
 
@@ -251,6 +353,136 @@ function menuDown() {
   );
 
   render();
+}
+
+function enter() {
+  const items = getItems();
+  const selected = items[selectedIndex];
+
+  if (!selected) return;
+
+  if (selected.type === 'settings') {
+    currentScreen = 'settings';
+    selectedIndex = 0;
+
+    render();
+    return;
+  }
+
+  if (selected.type === 'reset-hotkeys') {
+    Object.assign(hotkeys, defaultHotkeys);
+
+    saveHotkeys();
+    syncHotkeysWithMain();
+
+    render();
+    return;
+  }
+
+  if (currentScreen === 'games') {
+    selectedGame = selected;
+    selectedIndex = 0;
+    currentScreen = 'maps';
+  }
+
+  else if (currentScreen === 'settings') {
+    rebinding = true;
+    rebindingAction = selected.key;
+    rebindError = null;
+
+    window.electronAPI.setRebinding(true);
+
+    render();
+    return;
+  }
+
+  else if (currentScreen === 'maps') {
+    if (selected.type === 'relics') {
+      currentScreen = 'relics';
+    } else {
+      selectedMap = selected;
+      currentScreen = 'guides';
+    }
+
+    selectedIndex = 0;
+  }
+
+  else if (currentScreen === 'guides') {
+    selectedGuide = selected;
+    selectedIndex = 0;
+    currentScreen = 'steps';
+  }
+
+  else if (isRecipeScreen()) {
+    advanceRecipe();
+    return;
+  }
+
+  render();
+}
+
+function exitMenu() {
+  if (isRecipeScreen()) {
+    resetCurrentRecipe();
+  }
+
+  if (currentScreen === 'steps') {
+    currentScreen = 'guides';
+  }
+
+  else if (currentScreen === 'relics') {
+    currentScreen = 'maps';
+  }
+
+  else if (currentScreen === 'guides') {
+    currentScreen = 'maps';
+  }
+
+  else if (currentScreen === 'maps') {
+    currentScreen = 'games';
+  }
+
+  else if (currentScreen === 'settings') {
+    currentScreen = 'games';
+  }
+
+  render();
+}
+
+// ===============================
+// RENDER HELPERS
+// ===============================
+
+function getScreenTitle() {
+  if (currentScreen === 'games') return 'Juegos';
+  if (currentScreen === 'settings') return 'Configuración';
+  if (currentScreen === 'maps') return selectedGame.name;
+  if (currentScreen === 'guides') return selectedMap.name;
+  if (currentScreen === 'steps') return selectedGuide.name;
+  if (currentScreen === 'relics') return 'Reliquias';
+
+  return '';
+}
+
+function renderFooter() {
+  if (isRecipeScreen()) {
+    footer.innerHTML = `
+      <span>${hotkeys.previous} Paso anterior</span>
+      <span>${hotkeys.complete} Paso siguiente</span>
+      <span>${hotkeys.exit} Salir</span>
+      <span>${hotkeys.zoomImage} Imagen</span>
+      <span>${hotkeys.toggleHud} Ocultar HUD</span>
+    `;
+
+    return;
+  }
+
+  footer.innerHTML = `
+    <span>↑ ↓ Navegar</span>
+    <span>Enter Seleccionar</span>
+    <span>Esc Menú anterior</span>
+    <span>${hotkeys.toggleHud} Ocultar / Mostrar</span>
+  `;
 }
 
 function renderProgress() {
@@ -282,27 +514,254 @@ function renderProgress() {
   content.appendChild(wrapper);
 }
 
-function renderFooter() {
-  if (
-    currentScreen === 'steps' ||
-    currentScreen === 'relics'
-  ) {
-    footer.innerHTML = `
-      <span>${hotkeys.previous} Paso anterior</span>
-      <span>${hotkeys.complete} Paso siguiente</span>
-      <span>${hotkeys.exit} Salir</span>
-      <span>${hotkeys.zoomImage} Imagen</span>
-      <span>${hotkeys.toggleHud} Ocultar HUD</span>
-    `;
-  } else {
-    footer.innerHTML = `
-      <span>↑ ↓ Navegar</span>
-      <span>Enter Seleccionar</span>
-      <span>Esc Menú anterior</span>
-      <span>${hotkeys.toggleHud} Ocultar / Mostrar</span>
-    `;
-  }
+function renderImageViewer() {
+  const src = imageViewerImages[imageViewerIndex];
+
+  content.innerHTML = `
+    <div class="image-viewer">
+      <img src="${src}" />
+
+      <div class="description">
+        ${hotkeys.zoomImage} cerrar imagen
+        ${
+          imageViewerImages.length > 1
+            ? ` | ↑ anterior | ↓ siguiente | ${imageViewerIndex + 1}/${imageViewerImages.length}`
+            : ''
+        }
+      </div>
+    </div>
+  `;
 }
+
+function renderRebindingBox() {
+  if (!rebinding) return;
+
+  const waiting = document.createElement('div');
+  waiting.className = 'menu-item selected';
+
+  waiting.innerHTML = `
+    <div class="item-title">
+      Esperando tecla...
+    </div>
+
+    <div class="description">
+      Presioná una tecla libre. No se permiten teclas reservadas.
+    </div>
+  `;
+
+  content.appendChild(waiting);
+}
+
+function renderErrorBox() {
+  if (!rebindError) return;
+
+  const error = document.createElement('div');
+  error.className = 'menu-item error-box';
+  error.textContent = rebindError;
+
+  content.appendChild(error);
+}
+
+function renderCompletedBox() {
+  const progress = getProgress();
+
+  if (
+    !progress ||
+    progress.total === 0 ||
+    progress.current < progress.total
+  ) {
+    return;
+  }
+
+  const completedBox = document.createElement('div');
+  completedBox.className = 'completed-box';
+
+  completedBox.innerHTML = `
+    <strong>Guía completada</strong>
+    <span>Presioná ${hotkeys.exit} para salir</span>
+  `;
+
+  content.appendChild(completedBox);
+}
+
+function renderSectionTitle(item, previousItem) {
+  if (
+    !isRecipeScreen() ||
+    !item.section ||
+    item.section === previousItem?.section
+  ) {
+    return;
+  }
+
+  const sectionTitle = document.createElement('div');
+
+  const sectionClass = item.section
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+
+  sectionTitle.className =
+    `section-title section-${sectionClass}`;
+
+  sectionTitle.textContent = item.section;
+
+  content.appendChild(sectionTitle);
+}
+
+function renderMenuItem(item, index, recipeMode, currentRecipeIndex) {
+  const div = document.createElement('div');
+  div.className = 'menu-item';
+
+  const completedStep =
+    recipeMode &&
+    index < currentRecipeIndex;
+
+  const currentStep =
+    recipeMode
+      ? index === currentRecipeIndex
+      : index === selectedIndex;
+
+  if (completedStep) {
+    div.classList.add('done');
+  }
+
+  if (currentStep) {
+    div.classList.add('selected');
+  }
+
+  const showThumbnail =
+    currentScreen === 'relics' &&
+    item.image;
+
+  const itemTitle =
+    item.label ||
+    item.name ||
+    item.title;
+
+  const hotkeyText =
+    item.key && item.type !== 'reset-hotkeys'
+      ? hotkeys[item.key]
+      : '';
+
+  div.innerHTML = `
+    <div class="item-row">
+      <span class="check">
+        ${
+          recipeMode
+            ? completedStep
+              ? '✓'
+              : currentStep
+              ? '➜'
+              : '○'
+            : currentStep
+            ? '➜'
+            : ''
+        }
+      </span>
+
+      ${
+        showThumbnail
+          ? `
+            <img
+              class="relic-thumbnail"
+              src="${item.image}"
+            />
+          `
+          : ''
+      }
+
+      <span class="item-title">
+        ${itemTitle}
+      </span>
+
+      ${
+        hotkeyText
+          ? `
+            <span class="hotkey-value">
+              ${hotkeyText}
+            </span>
+          `
+          : ''
+      }
+    </div>
+
+    ${
+      currentStep
+        ? `
+          ${
+            item.description
+              ? `
+                <div class="description">
+                  ${item.description}
+                </div>
+              `
+              : ''
+          }
+
+          ${
+            item.images?.length
+              ? `
+                <div class="guide-gallery">
+                  ${item.images
+                    .map(
+                      (img) => `
+                        <img
+                          class="guide-image"
+                          src="${img}"
+                        />
+                      `
+                    )
+                    .join('')}
+                </div>
+              `
+              : item.image && currentScreen !== 'relics'
+              ? `
+                <div class="image-wrap">
+                  <img
+                    class="guide-image"
+                    src="${item.image}"
+                  />
+                </div>
+              `
+              : ''
+          }
+        `
+        : ''
+    }
+  `;
+
+  content.appendChild(div);
+}
+
+function renderSettingsButton(items) {
+  if (currentScreen !== 'games') return;
+
+  const settingsIndex = items.findIndex(
+    (item) => item.type === 'settings'
+  );
+
+  const settingsButton = document.createElement('div');
+
+  settingsButton.className = 'settings-button';
+
+  if (selectedIndex === settingsIndex) {
+    settingsButton.classList.add('selected');
+  }
+
+  settingsButton.innerHTML = '<span>⚙ CONFIGURACIÓN</span>';
+
+  settingsButton.onclick = () => {
+    currentScreen = 'settings';
+    selectedIndex = 0;
+
+    render();
+  };
+
+  content.appendChild(settingsButton);
+}
+
+// ===============================
+// RENDER
+// ===============================
 
 function render() {
   const items = getItems();
@@ -311,92 +770,19 @@ function render() {
 
   content.innerHTML = '';
 
-  if (imageViewerOpen && imageViewerSrc) {
-    content.innerHTML = `
-      <div class="image-viewer">
-        <img src="${imageViewerSrc}" />
-        <div class="description">
-          ${hotkeys.zoomImage} para cerrar imagen
-        </div>
-      </div>
-    `;
-
+  if (imageViewerOpen && imageViewerImages.length) {
+    renderImageViewer();
     return;
   }
 
   const title = document.createElement('h2');
-
-  switch (currentScreen) {
-    case 'games':
-      title.textContent = 'Juegos';
-      break;
-
-    case 'settings':
-      title.textContent = 'Configuración';
-      break;
-
-    case 'maps':
-      title.textContent = selectedGame.name;
-      break;
-
-    case 'guides':
-      title.textContent = selectedMap.name;
-      break;
-
-    case 'steps':
-      title.textContent = selectedGuide.name;
-      break;
-
-    case 'relics':
-      title.textContent = 'Reliquias';
-      break;
-  }
-
+  title.textContent = getScreenTitle();
   content.appendChild(title);
 
-  if (rebinding) {
-    const waiting = document.createElement('div');
-    waiting.className = 'menu-item selected';
-
-    waiting.innerHTML = `
-      <div class="item-title">
-        Esperando tecla...
-      </div>
-
-      <div class="description">
-        Presioná una tecla libre. No se permiten teclas reservadas.
-      </div>
-    `;
-
-    content.appendChild(waiting);
-  }
-
-  if (rebindError) {
-    const error = document.createElement('div');
-    error.className = 'menu-item error-box';
-    error.textContent = rebindError;
-    content.appendChild(error);
-  }
-
+  renderRebindingBox();
+  renderErrorBox();
   renderProgress();
-
-  const progress = getProgress();
-
-  if (
-    progress &&
-    progress.total > 0 &&
-    progress.current >= progress.total
-  ) {
-    const completedBox = document.createElement('div');
-    completedBox.className = 'completed-box';
-
-    completedBox.innerHTML = `
-      <strong>Guía completada</strong>
-      <span>Presioná ${hotkeys.exit} para salir</span>
-    `;
-
-    content.appendChild(completedBox);
-  }
+  renderCompletedBox();
 
   if (!items.length) {
     const empty = document.createElement('div');
@@ -406,14 +792,11 @@ function render() {
     return;
   }
 
-  const recipeMode =
-    currentScreen === 'steps' ||
-    currentScreen === 'relics';
-
+  const recipeMode = isRecipeScreen();
   const currentRecipeIndex = getCurrentStepIndex();
 
-  let visibleItems = items;
   let startIndex = 0;
+  let visibleItems = items;
 
   if (recipeMode) {
     startIndex = Math.max(
@@ -428,9 +811,7 @@ function render() {
   }
 
   visibleItems.forEach((item, visibleIndex) => {
-    if (item.fixedBottom) {
-      return;
-    }
+    if (item.fixedBottom) return;
 
     const index = recipeMode
       ? startIndex + visibleIndex
@@ -438,146 +819,19 @@ function render() {
 
     const previousItem = items[index - 1];
 
-    if (
-      recipeMode &&
-      item.section &&
-      item.section !== previousItem?.section
-    ) {
-      const sectionTitle = document.createElement('div');
-
-      const sectionClass = item.section
-        .toLowerCase()
-        .replace(/\s+/g, '-');
-
-      sectionTitle.className = `section-title section-${sectionClass}`;
-      sectionTitle.textContent = item.section;
-
-      content.appendChild(sectionTitle);
-    }
-
-    const div = document.createElement('div');
-    div.className = 'menu-item';
-
-    const completedStep =
-      recipeMode &&
-      index < currentRecipeIndex;
-
-    const currentStep =
-      recipeMode
-        ? index === currentRecipeIndex
-        : index === selectedIndex;
-
-    if (completedStep) {
-      div.classList.add('done');
-    }
-
-    if (currentStep) {
-      div.classList.add('selected');
-    }
-
-    const itemTitle =
-      item.label ||
-      item.name ||
-      item.title;
-
-    const hotkeyText =
-      item.key && item.type !== 'reset-hotkeys'
-        ? hotkeys[item.key]
-        : '';
-
-    div.innerHTML = `
-      <div class="item-row">
-        <span class="check">
-          ${
-            recipeMode
-              ? completedStep
-                ? '✓'
-                : currentStep
-                ? '➜'
-                : '○'
-              : currentStep
-              ? '➜'
-              : ''
-          }
-        </span>
-
-        <span class="item-title">
-          ${itemTitle}
-        </span>
-
-        ${
-          hotkeyText
-            ? `
-              <span class="hotkey-value">
-                ${hotkeyText}
-              </span>
-            `
-            : ''
-        }
-      </div>
-
-      ${
-        currentStep && !compactMode
-          ? `
-            ${
-              item.description
-                ? `
-                  <div class="description">
-                    ${item.description}
-                  </div>
-                `
-                : ''
-            }
-
-            ${
-              item.image
-                ? `
-                  <div class="image-wrap">
-                    <img
-                      class="guide-image"
-                      src="${item.image}"
-                    />
-                  </div>
-                `
-                : ''
-            }
-          `
-          : ''
-      }
-    `;
-
-    content.appendChild(div);
+    renderSectionTitle(item, previousItem);
+    renderMenuItem(
+      item,
+      index,
+      recipeMode,
+      currentRecipeIndex
+    );
   });
 
-  if (currentScreen === 'games') {
-    const settingsItem = items.find(
-      (item) => item.type === 'settings'
-    );
+  renderSettingsButton(items);
 
-    const settingsIndex = items.findIndex(
-      (item) => item.type === 'settings'
-    );
-
-    const settingsButton = document.createElement('div');
-
-    settingsButton.className = 'settings-button';
-
-    if (selectedIndex === settingsIndex) {
-      settingsButton.classList.add('selected');
-    }
-
-    settingsButton.innerHTML = '<span>⚙ CONFIGURACIÓN</span>';
-
-    settingsButton.onclick = () => {
-      currentScreen = 'settings';
-      selectedIndex = 0;
-      render();
-    };
-
-    content.appendChild(settingsButton);
-  }
-
-  const currentElement = content.querySelector('.menu-item.selected');
+  const currentElement =
+    content.querySelector('.menu-item.selected');
 
   if (currentElement) {
     currentElement.scrollIntoView({
@@ -587,130 +841,70 @@ function render() {
   }
 }
 
-function enter() {
-  const items = getItems();
-  const selected = items[selectedIndex];
+// ===============================
+// REBINDING
+// ===============================
 
-  if (!selected) return;
-
-  if (selected.type === 'settings') {
-    currentScreen = 'settings';
-    selectedIndex = 0;
+function handleRebinding(pressedKey) {
+  if (forbiddenKeys.includes(pressedKey)) {
+    rebindError = 'Esa tecla está reservada y no se puede usar.';
     render();
     return;
   }
 
-  if (selected.type === 'reset-hotkeys') {
-    Object.assign(hotkeys, defaultHotkeys);
-
-    saveHotkeys();
-
-    Object.entries(hotkeys).forEach(([action, key]) => {
-      window.electronAPI.updateHotkey(action, key);
-    });
-
-    render();
-    return;
-  }
-
-  if (currentScreen === 'games') {
-    selectedGame = selected;
-    selectedIndex = 0;
-    currentScreen = 'maps';
-  } else if (currentScreen === 'settings') {
-    rebinding = true;
-    rebindingAction = selected.key;
-    rebindError = null;
-    render();
-    return;
-  } else if (currentScreen === 'maps') {
-    if (selected.type === 'relics') {
-      currentScreen = 'relics';
-    } else {
-      selectedMap = selected;
-      currentScreen = 'guides';
-    }
-
-    selectedIndex = 0;
-  } else if (currentScreen === 'guides') {
-    selectedGuide = selected;
-    currentScreen = 'steps';
-    selectedIndex = 0;
-  } else if (
-    currentScreen === 'steps' ||
-    currentScreen === 'relics'
-  ) {
-    advanceRecipe();
-    return;
-  }
-
-  render();
-}
-
-function advanceRecipe() {
-  const key = getProgressKey();
-
-  if (!key) return;
-
-  if (!completed[key]) {
-    completed[key] = [];
-  }
-
-  const items = getItems();
-
-  if (completed[key].length >= items.length) {
-    return;
-  }
-
-  const nextItem = items[completed[key].length];
-
-  completed[key].push(
-    nextItem.id ||
-      nextItem.name ||
-      nextItem.title
+  const alreadyUsed = Object.entries(hotkeys).find(
+    ([action, key]) =>
+      action !== rebindingAction &&
+      key === pressedKey
   );
 
-  render();
-}
-
-function back() {
-  const key = getProgressKey();
-
-  if (key && completed[key]?.length > 0) {
-    completed[key].pop();
+  if (alreadyUsed) {
+    rebindError = 'Esa tecla ya está asignada a otra acción.';
+    render();
+    return;
   }
 
-  render();
-}
+  hotkeys[rebindingAction] = pressedKey;
 
-function exitRecipeMenu() {
-  const key = getProgressKey();
+  saveHotkeys();
 
-  if (key) {
-    completed[key] = [];
-  }
+  window.electronAPI.updateHotkey(
+    rebindingAction,
+    pressedKey
+  );
 
-  if (currentScreen === 'steps') {
-    currentScreen = 'guides';
-  } else if (currentScreen === 'relics') {
-    currentScreen = 'maps';
-  } else if (currentScreen === 'guides') {
-    currentScreen = 'maps';
-  } else if (currentScreen === 'maps') {
-    currentScreen = 'games';
-  } else if (currentScreen === 'settings') {
-    currentScreen = 'games';
-  }
+  window.electronAPI.setRebinding(false);
+
+  rebindError = null;
+  rebinding = false;
+  rebindingAction = null;
 
   render();
 }
 
-document.addEventListener('keydown', (event) => {
+// ===============================
+// INPUT HANDLERS
+// ===============================
+
+function handleLocalKeydown(event) {
   const pressedKey = normalizeKey(event.key);
 
   if (imageViewerOpen) {
+    event.preventDefault();
+
     if (pressedKey === hotkeys.zoomImage) {
       toggleCurrentImage();
+      return;
+    }
+
+    if (pressedKey === 'Down') {
+      nextViewerImage();
+      return;
+    }
+
+    if (pressedKey === 'Up') {
+      previousViewerImage();
+      return;
     }
 
     return;
@@ -718,65 +912,23 @@ document.addEventListener('keydown', (event) => {
 
   if (rebinding) {
     event.preventDefault();
-
-    const newKey = normalizeKey(event.key);
-
-    if (forbiddenKeys.includes(newKey)) {
-      rebindError = 'Esa tecla está reservada y no se puede usar.';
-      render();
-      return;
-    }
-
-    const alreadyUsed = Object.entries(hotkeys).find(
-      ([action, key]) =>
-        action !== rebindingAction &&
-        key === newKey
-    );
-
-    if (alreadyUsed) {
-      rebindError = 'Esa tecla ya está asignada a otra acción.';
-      render();
-      return;
-    }
-
-    hotkeys[rebindingAction] = newKey;
-
-    saveHotkeys();
-
-    window.electronAPI.updateHotkey(
-      rebindingAction,
-      newKey
-    );
-
-    rebindError = null;
-    rebinding = false;
-    rebindingAction = null;
-
-    render();
+    handleRebinding(pressedKey);
     return;
   }
 
-  if (
-    currentScreen === 'steps' ||
-    currentScreen === 'relics'
-  ) {
+  if (isRecipeScreen()) {
     if (pressedKey === hotkeys.complete) {
       advanceRecipe();
       return;
     }
 
     if (pressedKey === hotkeys.previous) {
-      back();
+      backRecipeStep();
       return;
     }
   }
 
-  if (
-    currentScreen === 'games' ||
-    currentScreen === 'maps' ||
-    currentScreen === 'guides' ||
-    currentScreen === 'settings'
-  ) {
+  if (isMenuScreen()) {
     if (pressedKey === 'Down') {
       menuDown();
       return;
@@ -802,7 +954,7 @@ document.addEventListener('keydown', (event) => {
     pressedKey === hotkeys.previous ||
     pressedKey === 'Backspace'
   ) {
-    back();
+    backRecipeStep();
     return;
   }
 
@@ -810,84 +962,76 @@ document.addEventListener('keydown', (event) => {
     pressedKey === hotkeys.exit ||
     pressedKey === 'Escape'
   ) {
-    exitRecipeMenu();
-    return;
-  }
-
-  if (pressedKey === 'Tab') {
-    event.preventDefault();
-    toggleCompactMode();
+    exitMenu();
     return;
   }
 
   if (pressedKey === hotkeys.zoomImage) {
     toggleCurrentImage();
   }
-});
+}
 
-window.addEventListener('keydown', (event) => {
-  if (event.altKey) {
-    window.electronAPI.setClickThrough(false);
+function handleGuideAction(action) {
+  if (imageViewerOpen) {
+    if (action === 'zoomImage') {
+      toggleCurrentImage();
+      return;
+    }
+
+    if (action === 'menuDown') {
+      nextViewerImage();
+      return;
+    }
+
+    if (action === 'menuUp') {
+      previousViewerImage();
+      return;
+    }
+
+    return;
   }
-});
 
-window.addEventListener('keyup', () => {
-  window.electronAPI.setClickThrough(true);
-});
-
-window.electronAPI.onGuideAction((action) => {
   if (action === 'enter') {
     enter();
+    return;
   }
 
   if (action === 'escape') {
-    exitRecipeMenu();
+    exitMenu();
+    return;
   }
 
   if (action === 'menuUp') {
-    if (
-      currentScreen === 'steps' ||
-      currentScreen === 'relics'
-    ) {
-      back();
+    if (isRecipeScreen()) {
+      backRecipeStep();
     } else {
       menuUp();
     }
+
+    return;
   }
 
   if (action === 'menuDown') {
-    if (
-      currentScreen === 'steps' ||
-      currentScreen === 'relics'
-    ) {
+    if (isRecipeScreen()) {
       advanceRecipe();
     } else {
       menuDown();
     }
-  }
 
-  if (action === 'complete') {
-    enter();
-  }
-
-  if (action === 'previous') {
-    back();
+    return;
   }
 
   if (action === 'exit') {
-    exitRecipeMenu();
+    exitMenu();
+    return;
   }
 
   if (action === 'zoomImage') {
     toggleCurrentImage();
   }
-});
+}
 
-Object.entries(hotkeys).forEach(([action, key]) => {
-  window.electronAPI.updateHotkey(action, key);
-});
-
-window.electronAPI.onHudVisibility((value) => {
+function handleHudVisibility(value) {
   const hud = document.getElementById('hud');
 
   if (value === 'show') {
@@ -899,6 +1043,25 @@ window.electronAPI.onHudVisibility((value) => {
     hud.classList.remove('hud-visible');
     hud.classList.add('hud-hidden');
   }
-});
+}
+
+// ===============================
+// INIT
+// ===============================
+
+document.addEventListener(
+  'keydown',
+  handleLocalKeydown
+);
+
+window.electronAPI.onGuideAction(
+  handleGuideAction
+);
+
+window.electronAPI.onHudVisibility(
+  handleHudVisibility
+);
+
+syncHotkeysWithMain();
 
 render();
